@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from database import create_document, get_documents, db
-from schemas import Property
+from schemas import Property, Content
 
 from bson import ObjectId
 
@@ -165,6 +165,45 @@ def get_property(property_id: str):
             doc["updated_at"] = doc["updated_at"].isoformat()
         except Exception:
             pass
+    return doc
+
+# -------------------- Editable Content API --------------------
+
+class ContentUpsert(BaseModel):
+    key: str
+    value: str
+
+@app.get("/api/content")
+def list_content(prefix: Optional[str] = Query(None, description="Filter by key prefix e.g. 'homepage.'"), limit: int = Query(100, ge=1, le=500)):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    filter_dict = {}
+    if prefix:
+        filter_dict["key"] = {"$regex": f"^{prefix}"}
+    docs = get_documents("content", filter_dict, limit)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+    return {"items": docs}
+
+@app.get("/api/content/{key}")
+def get_content(key: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    doc = db["content"].find_one({"key": key})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Content not found")
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+@app.post("/api/content")
+def upsert_content(payload: ContentUpsert):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    # Upsert by key
+    result = db["content"].update_one({"key": payload.key}, {"$set": {"key": payload.key, "value": payload.value}}, upsert=True)
+    # Fetch back
+    doc = db["content"].find_one({"key": payload.key})
+    doc["id"] = str(doc.pop("_id"))
     return doc
 
 if __name__ == "__main__":
